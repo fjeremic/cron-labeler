@@ -6210,27 +6210,32 @@ const minimatch_1 = __webpack_require__(595);
 function run() {
     return __awaiter(this, void 0, void 0, function* () {
         try {
-            const token = core.getInput('repo-token', { required: true });
-            const configPath = core.getInput('configuration-path', { required: true });
-            const prNumber = getPrNumber();
-            if (!prNumber) {
-                console.log('Could not get pull request number from context, exiting');
-                return;
-            }
-            const client = new github.GitHub(token);
-            core.debug(`fetching changed files for pr #${prNumber}`);
-            const changedFiles = yield getChangedFiles(client, prNumber);
-            const labelGlobs = yield getLabelGlobs(client, configPath);
-            const labels = [];
-            for (const [label, globs] of labelGlobs.entries()) {
-                core.debug(`processing ${label}`);
-                if (checkGlobs(changedFiles, globs)) {
-                    labels.push(label);
+            const args = getAndValidateArgs();
+            const client = new github.GitHub(args.repoToken);
+            const contents = yield client.repos.getContents({
+                owner: github.context.repo.owner,
+                repo: github.context.repo.repo,
+                path: args.configurationPath,
+                ref: github.context.sha
+            });
+            args.operationsPerRun -= 1;
+            const configurationContent = Buffer.from(contents.data.content, contents.data.encoding).toString();
+            // loads (hopefully) a `{[label:string]: string | string[]}`, but is `any`:
+            const configObject = yaml.safeLoad(configurationContent);
+            // transform `any` => `Map<string,string[]>` or throw if yaml is malformed:
+            const labelGlobs = new Map();
+            for (const label in configObject) {
+                if (typeof configObject[label] === "string") {
+                    labelGlobs.set(label, [configObject[label]]);
+                }
+                else if (configObject[label] instanceof Array) {
+                    labelGlobs.set(label, configObject[label]);
+                }
+                else {
+                    throw Error(`found unexpected type for label ${label} (should be string or array of globs)`);
                 }
             }
-            if (labels.length > 0) {
-                yield addLabels(client, prNumber, labels);
-            }
+            yield processPrs(client, labelGlobs, args, args.operationsPerRun);
         }
         catch (error) {
             core.error(error);
@@ -6238,62 +6243,58 @@ function run() {
         }
     });
 }
-function getPrNumber() {
-    const pullRequest = github.context.payload.pull_request;
-    if (!pullRequest) {
-        return undefined;
-    }
-    return pullRequest.number;
-}
-function getChangedFiles(client, prNumber) {
+function processPrs(client, labelGlobs, args, operationsLeft, page = 1) {
     return __awaiter(this, void 0, void 0, function* () {
-        const listFilesResponse = yield client.pulls.listFiles({
+        const prs = yield client.pulls.list({
             owner: github.context.repo.owner,
             repo: github.context.repo.repo,
-            pull_number: prNumber
+            state: "open",
+            sort: "updated",
+            direction: "desc",
+            per_page: 100,
+            page
         });
-        const changedFiles = listFilesResponse.data.map(f => f.filename);
-        core.debug('found changed files:');
-        for (const file of changedFiles) {
-            core.debug('  ' + file);
+        operationsLeft -= 1;
+        if (prs.data.length === 0 || operationsLeft === 0) {
+            return operationsLeft;
         }
-        return changedFiles;
+        for (const pr of prs.data.values()) {
+            core.debug(`found pr #${pr.number}: ${pr.title}`);
+            core.debug(`fetching changed files for pr #${pr.number}`);
+            const listFilesResponse = yield client.pulls.listFiles({
+                owner: github.context.repo.owner,
+                repo: github.context.repo.repo,
+                pull_number: pr.number
+            });
+            operationsLeft -= 1;
+            const changedFiles = listFilesResponse.data.map(f => f.filename);
+            core.debug("found changed files:");
+            for (const file of changedFiles) {
+                core.debug("  " + file);
+            }
+            const labels = [];
+            for (const [label, globs] of labelGlobs.entries()) {
+                core.debug(`processing label ${label}`);
+                if (checkGlobs(changedFiles, globs)) {
+                    labels.push(label);
+                }
+            }
+            if (labels.length > 0) {
+                yield client.issues.addLabels({
+                    owner: github.context.repo.owner,
+                    repo: github.context.repo.repo,
+                    issue_number: pr.number,
+                    labels: labels
+                });
+                operationsLeft -= 1;
+            }
+            if (operationsLeft <= 0) {
+                core.warning(`performed ${args.operationsPerRun} operations, exiting to avoid rate limit`);
+                return 0;
+            }
+        }
+        return yield processPrs(client, labelGlobs, args, operationsLeft, page + 1);
     });
-}
-function getLabelGlobs(client, configurationPath) {
-    return __awaiter(this, void 0, void 0, function* () {
-        const configurationContent = yield fetchContent(client, configurationPath);
-        // loads (hopefully) a `{[label:string]: string | string[]}`, but is `any`:
-        const configObject = yaml.safeLoad(configurationContent);
-        // transform `any` => `Map<string,string[]>` or throw if yaml is malformed:
-        return getLabelGlobMapFromObject(configObject);
-    });
-}
-function fetchContent(client, repoPath) {
-    return __awaiter(this, void 0, void 0, function* () {
-        const response = yield client.repos.getContents({
-            owner: github.context.repo.owner,
-            repo: github.context.repo.repo,
-            path: repoPath,
-            ref: github.context.sha
-        });
-        return Buffer.from(response.data.content, response.data.encoding).toString();
-    });
-}
-function getLabelGlobMapFromObject(configObject) {
-    const labelGlobs = new Map();
-    for (const label in configObject) {
-        if (typeof configObject[label] === 'string') {
-            labelGlobs.set(label, [configObject[label]]);
-        }
-        else if (configObject[label] instanceof Array) {
-            labelGlobs.set(label, configObject[label]);
-        }
-        else {
-            throw Error(`found unexpected type for label ${label} (should be string or array of globs)`);
-        }
-    }
-    return labelGlobs;
 }
 function checkGlobs(changedFiles, globs) {
     for (const glob of globs) {
@@ -6309,15 +6310,18 @@ function checkGlobs(changedFiles, globs) {
     }
     return false;
 }
-function addLabels(client, prNumber, labels) {
-    return __awaiter(this, void 0, void 0, function* () {
-        yield client.issues.addLabels({
-            owner: github.context.repo.owner,
-            repo: github.context.repo.repo,
-            issue_number: prNumber,
-            labels: labels
-        });
-    });
+function getAndValidateArgs() {
+    const args = {
+        repoToken: core.getInput("repo-token", { required: true }),
+        configurationPath: core.getInput("configuration-path"),
+        operationsPerRun: parseInt(core.getInput("operations-per-run", { required: true }))
+    };
+    for (const numberInput of ["operations-per-run"]) {
+        if (isNaN(parseInt(core.getInput(numberInput)))) {
+            throw Error(`input ${numberInput} did not parse to a valid integer`);
+        }
+    }
+    return args;
 }
 run();
 

@@ -1,12 +1,18 @@
-name: 'Labeler'
-description: 'Add labels to new pull requests based on the files that are changed'
-author: 'GitHub'
+name: 'Cron Labeler'
+description: 'An action for automatically labelling pull requests from forked repositories using a rate limit aware cron job.'
+author: 'Filip Jeremic'
+branding:
+  icon: 'tag'  
+  color: 'blue'
 inputs: 
   repo-token:
     description: 'The GITHUB_TOKEN secret'
   configuration-path:
     description: 'The path for the label configurations'
     default: '.github/labeler.yml'
+  operations-per-run:
+    description: 'The maximum number of operations per run, used to control rate limiting'
+    default: 30
 runs:
   using: 'node12'
   main: 'dist/index.js'

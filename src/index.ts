@@ -3,117 +3,126 @@ import * as github from "@actions/github";
 import * as yaml from "js-yaml";
 import { Minimatch } from "minimatch";
 
-async function run() {
+interface Args {
+  repoToken: string;
+  configurationPath: string;
+  operationsPerRun: number;
+}
+
+async function run(): Promise<void> {
   try {
-    const token = core.getInput("repo-token", { required: true });
-    const configPath = core.getInput("configuration-path", { required: true });
+    const args = getAndValidateArgs();
 
-    const prNumber = getPrNumber();
-    if (!prNumber) {
-      console.log("Could not get pull request number from context, exiting");
-      return;
-    }
+    const client = new github.GitHub(args.repoToken);
 
-    const client = new github.GitHub(token);
+    const contents: any = await client.repos.getContents({
+      owner: github.context.repo.owner,
+      repo: github.context.repo.repo,
+      path: args.configurationPath,
+      ref: github.context.sha
+    });
 
-    core.debug(`fetching changed files for pr #${prNumber}`);
-    const changedFiles: string[] = await getChangedFiles(client, prNumber);
-    const labelGlobs: Map<string, string[]> = await getLabelGlobs(
-      client,
-      configPath
-    );
+    args.operationsPerRun -= 1;
 
-    const labels: string[] = [];
-    for (const [label, globs] of labelGlobs.entries()) {
-      core.debug(`processing ${label}`);
-      if (checkGlobs(changedFiles, globs)) {
-        labels.push(label);
+    const configurationContent: string = Buffer.from(
+      contents.data.content,
+      contents.data.encoding
+    ).toString();
+
+    // loads (hopefully) a `{[label:string]: string | string[]}`, but is `any`:
+    const configObject: any = yaml.safeLoad(configurationContent);
+
+    // transform `any` => `Map<string,string[]>` or throw if yaml is malformed:
+    const labelGlobs: Map<string, string[]> = new Map();
+    for (const label in configObject) {
+      if (typeof configObject[label] === "string") {
+        labelGlobs.set(label, [configObject[label]]);
+      } else if (configObject[label] instanceof Array) {
+        labelGlobs.set(label, configObject[label]);
+      } else {
+        throw Error(
+          `found unexpected type for label ${label} (should be string or array of globs)`
+        );
       }
     }
 
-    if (labels.length > 0) {
-      await addLabels(client, prNumber, labels);
-    }
+    await processPrs(client, labelGlobs, args, args.operationsPerRun);
   } catch (error) {
     core.error(error);
     core.setFailed(error.message);
   }
 }
 
-function getPrNumber(): number | undefined {
-  const pullRequest = github.context.payload.pull_request;
-  if (!pullRequest) {
-    return undefined;
-  }
-
-  return pullRequest.number;
-}
-
-async function getChangedFiles(
+async function processPrs(
   client: github.GitHub,
-  prNumber: number
-): Promise<string[]> {
-  const listFilesResponse = await client.pulls.listFiles({
+  labelGlobs: Map<string, string[]>,
+  args: Args,
+  operationsLeft: number,
+  page: number = 1
+): Promise<number> {
+  const prs = await client.pulls.list({
     owner: github.context.repo.owner,
     repo: github.context.repo.repo,
-    pull_number: prNumber
+    state: "open",
+    sort: "updated",
+    direction: "desc",
+    per_page: 100,
+    page
   });
 
-  const changedFiles = listFilesResponse.data.map(f => f.filename);
+  operationsLeft -= 1;
 
-  core.debug("found changed files:");
-  for (const file of changedFiles) {
-    core.debug("  " + file);
+  if (prs.data.length === 0 || operationsLeft === 0) {
+    return operationsLeft;
   }
 
-  return changedFiles;
-}
+  for (const pr of prs.data.values()) {
+    core.debug(`found pr #${pr.number}: ${pr.title}`);
+    core.debug(`fetching changed files for pr #${pr.number}`);
 
-async function getLabelGlobs(
-  client: github.GitHub,
-  configurationPath: string
-): Promise<Map<string, string[]>> {
-  const configurationContent: string = await fetchContent(
-    client,
-    configurationPath
-  );
+    const listFilesResponse = await client.pulls.listFiles({
+      owner: github.context.repo.owner,
+      repo: github.context.repo.repo,
+      pull_number: pr.number
+    });
 
-  // loads (hopefully) a `{[label:string]: string | string[]}`, but is `any`:
-  const configObject: any = yaml.safeLoad(configurationContent);
+    operationsLeft -= 1;
 
-  // transform `any` => `Map<string,string[]>` or throw if yaml is malformed:
-  return getLabelGlobMapFromObject(configObject);
-}
+    const changedFiles = listFilesResponse.data.map(f => f.filename);
 
-async function fetchContent(
-  client: github.GitHub,
-  repoPath: string
-): Promise<string> {
-  const response: any = await client.repos.getContents({
-    owner: github.context.repo.owner,
-    repo: github.context.repo.repo,
-    path: repoPath,
-    ref: github.context.sha
-  });
+    core.debug("found changed files:");
+    for (const file of changedFiles) {
+      core.debug("  " + file);
+    }
 
-  return Buffer.from(response.data.content, response.data.encoding).toString();
-}
+    const labels: string[] = [];
+    for (const [label, globs] of labelGlobs.entries()) {
+      core.debug(`processing label ${label}`);
+      if (checkGlobs(changedFiles, globs)) {
+        labels.push(label);
+      }
+    }
 
-function getLabelGlobMapFromObject(configObject: any): Map<string, string[]> {
-  const labelGlobs: Map<string, string[]> = new Map();
-  for (const label in configObject) {
-    if (typeof configObject[label] === "string") {
-      labelGlobs.set(label, [configObject[label]]);
-    } else if (configObject[label] instanceof Array) {
-      labelGlobs.set(label, configObject[label]);
-    } else {
-      throw Error(
-        `found unexpected type for label ${label} (should be string or array of globs)`
+    if (labels.length > 0) {
+      await client.issues.addLabels({
+        owner: github.context.repo.owner,
+        repo: github.context.repo.repo,
+        issue_number: pr.number,
+        labels: labels
+      });
+
+      operationsLeft -= 1;
+    }
+
+    if (operationsLeft <= 0) {
+      core.warning(
+        `performed ${args.operationsPerRun} operations, exiting to avoid rate limit`
       );
+      return 0;
     }
   }
 
-  return labelGlobs;
+  return await processPrs(client, labelGlobs, args, operationsLeft, page + 1);
 }
 
 function checkGlobs(changedFiles: string[], globs: string[]): boolean {
@@ -131,17 +140,22 @@ function checkGlobs(changedFiles: string[], globs: string[]): boolean {
   return false;
 }
 
-async function addLabels(
-  client: github.GitHub,
-  prNumber: number,
-  labels: string[]
-) {
-  await client.issues.addLabels({
-    owner: github.context.repo.owner,
-    repo: github.context.repo.repo,
-    issue_number: prNumber,
-    labels: labels
-  });
+function getAndValidateArgs(): Args {
+  const args = {
+    repoToken: core.getInput("repo-token", { required: true }),
+    configurationPath: core.getInput("configuration-path"),
+    operationsPerRun: parseInt(
+      core.getInput("operations-per-run", { required: true })
+    )
+  };
+
+  for (const numberInput of ["operations-per-run"]) {
+    if (isNaN(parseInt(core.getInput(numberInput)))) {
+      throw Error(`input ${numberInput} did not parse to a valid integer`);
+    }
+  }
+
+  return args;
 }
 
 run();

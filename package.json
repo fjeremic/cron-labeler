@@ -1,0 +1,30 @@
+{
+  "name": "cron-labeler",
+  "version": "0.0.1",
+  "description": "An action for automatically labelling pull requests from forked repositories using a rate limit aware cron job.",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc && ncc build",
+    "format": "prettier --write **/*.ts",
+    "format-check": "prettier --check **/*.ts"
+  },
+  "keywords": [],
+  "author": "Filip Jeremic",
+  "license": "MIT",
+  "dependencies": {
+    "@actions/core": "^1.0.0",
+    "@actions/github": "^2.1.1",
+    "js-yaml": "^3.13.1",
+    "minimatch": "^3.0.4",
+    "semver": "^6.1.1"
+  },
+  "devDependencies": {
+    "@types/node": "^12.0.4",
+    "@types/semver": "^6.0.0",
+    "@types/minimatch": "^3.0.0",
+    "@types/js-yaml": "^3.12.1",
+    "@zeit/ncc": "^0.21.1",
+    "prettier": "^1.17.1",
+    "typescript": "^3.5.1"
+  }
+}

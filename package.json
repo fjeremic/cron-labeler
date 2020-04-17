@@ -1,6 +1,6 @@
 {
   "name": "cron-labeler",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "description": "An action for automatically labelling pull requests from forked repositories using a rate limit aware cron job.",
   "main": "dist/index.js",
   "scripts": {

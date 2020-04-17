@@ -66,7 +66,7 @@ jobs:
     steps:
     - uses: fjeremic/cron-labeler@0.1.0
       with:
-        repo-token: "${{ secrets.GITHUB_TOKEN }}"
+        repo-token: ${{ secrets.GITHUB_TOKEN }}
 ```
 
 _Note: This grants access to the `GITHUB_TOKEN` so the action can make calls to GitHub's rest API._

@@ -48,7 +48,9 @@ async function run(): Promise<void> {
 
     await processPrs(client, labelGlobs, args, args.operationsPerRun);
   } catch (error) {
-    core.error(error);
+    console.log(error.message);
+    console.log(error.stack);
+
     core.setFailed(error.message);
   }
 }
@@ -77,8 +79,8 @@ async function processPrs(
   }
 
   for (const pr of prs.data.values()) {
-    core.debug(`found pr #${pr.number}: ${pr.title}`);
-    core.debug(`fetching changed files for pr #${pr.number}`);
+    console.log(`found pr #${pr.number}: ${pr.title}`);
+    console.log(`fetching changed files for pr #${pr.number}`);
 
     const listFilesResponse = await client.pulls.listFiles({
       owner: github.context.repo.owner,
@@ -90,14 +92,14 @@ async function processPrs(
 
     const changedFiles = listFilesResponse.data.map(f => f.filename);
 
-    core.debug("found changed files:");
+    console.log("found changed files:");
     for (const file of changedFiles) {
-      core.debug("  " + file);
+      console.log("  " + file);
     }
 
     const labels: string[] = [];
     for (const [label, globs] of labelGlobs.entries()) {
-      core.debug(`processing label ${label}`);
+      console.log(`processing label ${label}`);
       if (checkGlobs(changedFiles, globs)) {
         labels.push(label);
       }
@@ -127,16 +129,17 @@ async function processPrs(
 
 function checkGlobs(changedFiles: string[], globs: string[]): boolean {
   for (const glob of globs) {
-    core.debug(` checking pattern ${glob}`);
+    console.log(`  checking pattern ${glob}`);
     const matcher = new Minimatch(glob);
     for (const changedFile of changedFiles) {
-      core.debug(` - ${changedFile}`);
+      console.log(`  - ${changedFile}`);
       if (matcher.match(changedFile)) {
-        core.debug(` ${changedFile} matches`);
+        console.log(`    ${changedFile} matches`);
         return true;
       }
     }
   }
+
   return false;
 }
 

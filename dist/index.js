@@ -6238,7 +6238,8 @@ function run() {
             yield processPrs(client, labelGlobs, args, args.operationsPerRun);
         }
         catch (error) {
-            core.error(error);
+            console.log(error.message);
+            console.log(error.stack);
             core.setFailed(error.message);
         }
     });
@@ -6259,8 +6260,8 @@ function processPrs(client, labelGlobs, args, operationsLeft, page = 1) {
             return operationsLeft;
         }
         for (const pr of prs.data.values()) {
-            core.debug(`found pr #${pr.number}: ${pr.title}`);
-            core.debug(`fetching changed files for pr #${pr.number}`);
+            console.log(`found pr #${pr.number}: ${pr.title}`);
+            console.log(`fetching changed files for pr #${pr.number}`);
             const listFilesResponse = yield client.pulls.listFiles({
                 owner: github.context.repo.owner,
                 repo: github.context.repo.repo,
@@ -6268,13 +6269,13 @@ function processPrs(client, labelGlobs, args, operationsLeft, page = 1) {
             });
             operationsLeft -= 1;
             const changedFiles = listFilesResponse.data.map(f => f.filename);
-            core.debug("found changed files:");
+            console.log("found changed files:");
             for (const file of changedFiles) {
-                core.debug("  " + file);
+                console.log("  " + file);
             }
             const labels = [];
             for (const [label, globs] of labelGlobs.entries()) {
-                core.debug(`processing label ${label}`);
+                console.log(`processing label ${label}`);
                 if (checkGlobs(changedFiles, globs)) {
                     labels.push(label);
                 }
@@ -6298,12 +6299,12 @@ function processPrs(client, labelGlobs, args, operationsLeft, page = 1) {
 }
 function checkGlobs(changedFiles, globs) {
     for (const glob of globs) {
-        core.debug(` checking pattern ${glob}`);
+        console.log(`  checking pattern ${glob}`);
         const matcher = new minimatch_1.Minimatch(glob);
         for (const changedFile of changedFiles) {
-            core.debug(` - ${changedFile}`);
+            console.log(`  - ${changedFile}`);
             if (matcher.match(changedFile)) {
-                core.debug(` ${changedFile} matches`);
+                console.log(`    ${changedFile} matches`);
                 return true;
             }
         }

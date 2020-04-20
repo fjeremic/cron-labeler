@@ -6281,13 +6281,16 @@ function processPrs(client, labelGlobs, args, operationsLeft, page = 1) {
                 }
             }
             if (labels.length > 0) {
-                yield client.issues.addLabels({
-                    owner: github.context.repo.owner,
-                    repo: github.context.repo.repo,
-                    issue_number: pr.number,
-                    labels: labels
-                });
-                operationsLeft -= 1;
+                if (!labels.every(label => isLabeled(pr, label))) {
+                    console.log(`adding labels ${labels}`);
+                    yield client.issues.addLabels({
+                        owner: github.context.repo.owner,
+                        repo: github.context.repo.repo,
+                        issue_number: pr.number,
+                        labels: labels
+                    });
+                    operationsLeft -= 1;
+                }
             }
             if (operationsLeft <= 0) {
                 core.warning(`performed ${args.operationsPerRun} operations, exiting to avoid rate limit`);
@@ -6297,14 +6300,16 @@ function processPrs(client, labelGlobs, args, operationsLeft, page = 1) {
         return yield processPrs(client, labelGlobs, args, operationsLeft, page + 1);
     });
 }
+function isLabeled(pr, label) {
+    const labelComparer = l => label.localeCompare(l.name, undefined, { sensitivity: "accent" }) === 0;
+    return pr.labels.filter(labelComparer).length > 0;
+}
 function checkGlobs(changedFiles, globs) {
     for (const glob of globs) {
-        console.log(`  checking pattern ${glob}`);
         const matcher = new minimatch_1.Minimatch(glob);
         for (const changedFile of changedFiles) {
-            console.log(`  - ${changedFile}`);
             if (matcher.match(changedFile)) {
-                console.log(`    ${changedFile} matches`);
+                console.log(`  - ${changedFile} matches glob ${glob}`);
                 return true;
             }
         }

@@ -2,6 +2,10 @@ import * as core from "@actions/core";
 import * as github from "@actions/github";
 import * as yaml from "js-yaml";
 import { Minimatch } from "minimatch";
+import { Octokit } from "@octokit/rest";
+
+type Pull = Octokit.PullsListResponseItem;
+type PullLabel = Octokit.PullsListResponseItemLabelsItem;
 
 interface Args {
   repoToken: string;
@@ -106,14 +110,18 @@ async function processPrs(
     }
 
     if (labels.length > 0) {
-      await client.issues.addLabels({
-        owner: github.context.repo.owner,
-        repo: github.context.repo.repo,
-        issue_number: pr.number,
-        labels: labels
-      });
+      if (!labels.every(label => isLabeled(pr, label))) {
+        console.log(`adding labels ${labels}`);
 
-      operationsLeft -= 1;
+        await client.issues.addLabels({
+          owner: github.context.repo.owner,
+          repo: github.context.repo.repo,
+          issue_number: pr.number,
+          labels: labels
+        });
+
+        operationsLeft -= 1;
+      }
     }
 
     if (operationsLeft <= 0) {
@@ -127,14 +135,18 @@ async function processPrs(
   return await processPrs(client, labelGlobs, args, operationsLeft, page + 1);
 }
 
+function isLabeled(pr: Pull, label: string): boolean {
+  const labelComparer: (l: PullLabel) => boolean = l =>
+    label.localeCompare(l.name, undefined, { sensitivity: "accent" }) === 0;
+  return pr.labels.filter(labelComparer).length > 0;
+}
+
 function checkGlobs(changedFiles: string[], globs: string[]): boolean {
   for (const glob of globs) {
-    console.log(`  checking pattern ${glob}`);
     const matcher = new Minimatch(glob);
     for (const changedFile of changedFiles) {
-      console.log(`  - ${changedFile}`);
       if (matcher.match(changedFile)) {
-        console.log(`    ${changedFile} matches`);
+        console.log(`  - ${changedFile} matches glob ${glob}`);
         return true;
       }
     }

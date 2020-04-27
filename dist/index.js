@@ -6261,6 +6261,10 @@ function processPrs(client, labelGlobs, args, operationsLeft, page = 1) {
         }
         for (const pr of prs.data.values()) {
             console.log(`found pr #${pr.number}: ${pr.title}`);
+            if (args.skipLabeledPrs && pr.labels.length > 0) {
+                console.log(`skipping pr #${pr.number} since it has labels already`);
+                continue;
+            }
             console.log(`fetching changed files for pr #${pr.number}`);
             const listFilesResponse = yield client.pulls.listFiles({
                 owner: github.context.repo.owner,
@@ -6320,6 +6324,7 @@ function getAndValidateArgs() {
     const args = {
         repoToken: core.getInput("repo-token", { required: true }),
         configurationPath: core.getInput("configuration-path"),
+        skipLabeledPrs: core.getInput("skip-labeled-prs", { required: true }) === 'true',
         operationsPerRun: parseInt(core.getInput("operations-per-run", { required: true }))
     };
     for (const numberInput of ["operations-per-run"]) {

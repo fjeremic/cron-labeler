@@ -10,6 +10,9 @@ inputs:
   configuration-path:
     description: 'The path for the label configurations'
     default: '.github/labeler.yml'
+  skip-labeled-prs:
+    description: 'Determines whether the action should skip labelling pull requests which have labels already present'
+    default: true
   operations-per-run:
     description: 'The maximum number of operations per run, used to control rate limiting'
     default: 30

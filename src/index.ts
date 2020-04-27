@@ -10,6 +10,7 @@ type PullLabel = Octokit.PullsListResponseItemLabelsItem;
 interface Args {
   repoToken: string;
   configurationPath: string;
+  skipLabeledPrs: boolean;
   operationsPerRun: number;
 }
 
@@ -84,6 +85,12 @@ async function processPrs(
 
   for (const pr of prs.data.values()) {
     console.log(`found pr #${pr.number}: ${pr.title}`);
+
+    if (args.skipLabeledPrs && pr.labels.length > 0) {
+      console.log(`skipping pr #${pr.number} since it has labels already`);
+      continue;
+    }
+
     console.log(`fetching changed files for pr #${pr.number}`);
 
     const listFilesResponse = await client.pulls.listFiles({
@@ -159,6 +166,7 @@ function getAndValidateArgs(): Args {
   const args = {
     repoToken: core.getInput("repo-token", { required: true }),
     configurationPath: core.getInput("configuration-path"),
+    skipLabeledPrs: core.getInput("skip-labeled-prs", { required: true }) === 'true',
     operationsPerRun: parseInt(
       core.getInput("operations-per-run", { required: true })
     )
